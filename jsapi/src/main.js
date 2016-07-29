@@ -28,6 +28,11 @@ lux.layersUrl = '../layers.json';
 lux.searchUrl = 'http://map.geoportail.lu/main/wsgi/fulltextsearch?';
 
 /**
+ * @type {string}
+ */
+lux.getInfoServiceUrl = 'http://map.geoportail.lu/main/wsgi/getfeatureinfo';
+
+/**
  * @param {string} url Url to jsapilayers service.
  * @export
  */
@@ -165,6 +170,9 @@ lux.Map = function(options) {
     });
     this.addControl(control);
   }
+
+  ol.events.listen(this, ol.MapBrowserEvent.EventType.SINGLECLICK,
+      this.handleSingleclickEvent_, this);
 };
 
 goog.inherits(lux.Map, ol.Map);
@@ -267,20 +275,27 @@ lux.Map.prototype.addLayers_ = function(layers) {
   if (!conf) {
     return;
   }
-  layers.map(function(layer) {
+  layers.map(function(id) {
     var layerConf;
-    if (typeof layer == 'number' || !isNaN(parseInt(layer, 10))) {
-      layerConf = conf[layer];
-    } else if (typeof layer == 'string') {
-      layerConf = lux.findLayerByName_(layer, conf);
+    if (typeof id == 'number' || !isNaN(parseInt(id, 10))) {
+      layerConf = conf[id];
+    } else if (typeof id == 'string') {
+      var found = lux.findLayerByName_(id, conf);
+
+      id = found[0];
+      layerConf = found[1];
     }
     if (!layerConf) {
-      console.error('Layer "' + layer + '" not present in layers list');
+      console.error('Layer "' + id + '" not present in layers list');
       return;
     }
     var fn = (layerConf.type === 'internal WMS') ?
       lux.WMSLayerFactory_ : lux.WMTSLayerFactory_;
-    this.getLayers().push(fn(layerConf));
+    var l = fn(layerConf);
+    l.set('name', layerConf['name']);
+    l.set('metadata', layerConf['metadata']);
+    l.set('queryable_id', parseInt(id, 10));
+    this.getLayers().push(l);
   }.bind(this));
 };
 
@@ -296,14 +311,14 @@ lux.Map.prototype.addLayerById = function(layer) {
 /**
  * @param {string} name The layer name
  * @param {Object<string,luxx.LayersOptions>} layers The layers config
- * @return {luxx.LayersOptions|undefined} The layer config.
+ * @return {Array<number,luxx.LayersOptions>|undefined} The layer id + config.
  * @private
  */
 lux.findLayerByName_ = function(name, layers) {
   for (var i in layers) {
     var layer = layers[i];
     if (layer.name == name) {
-      return layer;
+      return [i, layer];
     }
   }
   return;
@@ -436,6 +451,74 @@ lux.Map.prototype.addSearch = function(target) {
 
 };
 
+
+lux.Map.prototype.handleSingleclickEvent_ = function(evt) {
+  var layers = this.getLayers().getArray();
+
+  // collect the queryable layers
+  var layersToQuery = [];
+  layers.forEach(function(layer) {
+    var metadata = layer.get('metadata');
+    if (metadata && metadata['is_queryable'] && layer.getVisible()) {
+      layersToQuery.push(layer.get('queryable_id'));
+    }
+  });
+
+  if (!layersToQuery.length) {
+    return;
+  }
+
+  var bigBuffer = 20;
+  var smallBuffer = 1;
+
+  var lb = ol.proj.transform(
+      this.getCoordinateFromPixel(
+      [evt.pixel[0] - bigBuffer, evt.pixel[1] + bigBuffer]),
+      this.getView().getProjection(), 'EPSG:2169');
+  var rt = ol.proj.transform(
+      this.getCoordinateFromPixel(
+      [evt.pixel[0] + bigBuffer, evt.pixel[1] - bigBuffer]),
+      this.getView().getProjection(), 'EPSG:2169');
+  var big_box = lb.concat(rt);
+
+  lb = ol.proj.transform(
+      this.getCoordinateFromPixel(
+      [evt.pixel[0] - smallBuffer, evt.pixel[1] + smallBuffer]),
+      this.getView().getProjection(), 'EPSG:2169');
+  rt = ol.proj.transform(
+      this.getCoordinateFromPixel(
+      [evt.pixel[0] + smallBuffer, evt.pixel[1] - smallBuffer]),
+      this.getView().getProjection(), 'EPSG:2169');
+  var small_box = lb.concat(rt);
+
+  this.getViewport().style.cursor = 'wait';
+
+  var params = {
+    'layers': layersToQuery.join(),
+    'box1': big_box.join(),
+    'box2': small_box.join()
+  };
+  params = Object.keys(params).map(function(key){
+    return key + "=" + encodeURIComponent(params[key]);
+  }).join("&");
+  fetch(lux.getInfoServiceUrl + '?' + params).then(function(resp) {
+    return resp.json();
+  }).then(function(json) {
+    this.getViewport().style.cursor = '';
+    if (!json || !json.length) {
+      return;
+    }
+
+    // each item in the result corresponds to a layer
+    json.forEach(function(resultLayer) {
+      console.log (this.layersConfig[resultLayer.layer]);
+      console.log (resultLayer.template);
+      console.log (resultLayer.features);
+    }.bind(this));
+  }.bind(this));
+};
+
+
 /**
  * @param {Object} config The layer's config
  * @return {ol.layer.Tile} The layer.
@@ -449,7 +532,6 @@ lux.WMTSLayerFactory_ = function(config) {
 
 
   var layer = new ol.layer.Tile({
-    name  : config['name'],
     source: new ol.source.WMTS({
       url             : url,
       layer           : config['name'],
@@ -496,7 +578,6 @@ lux.WMSLayerFactory_ = function(config) {
     }
   };
   var layer = new ol.layer.Image({
-    name: config['name'],
     source: new ol.source.ImageWMS(optSource)
   });
 
