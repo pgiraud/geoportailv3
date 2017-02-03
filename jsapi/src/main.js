@@ -64,6 +64,11 @@ lux.searchUrl = 'fulltextsearch?';
 lux.baseUrl = null;
 
 /**
+ * @type {string}
+ */
+lux.profileUrl = 'profile.json';
+
+/**
  * @param {string|null} url Base url to services
  * @export
  * @api
@@ -85,6 +90,7 @@ lux.setBaseUrl = function(url) {
   lux.geocodeUrl = url + lux.geocodeUrl;
   lux.reverseGeocodeUrl = url + lux.reverseGeocodeUrl;
   lux.queryUrl = url + lux.queryUrl;
+  lux.profileUrl = url + lux.profileUrl;
 
   lux.baseUrl = url;
 };

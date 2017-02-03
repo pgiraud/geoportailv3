@@ -761,8 +761,7 @@ lux.MyMap.prototype.loadProfile = function(geom, target, opt_addCloseBtn) {
     body: body
   });
 
-  // FIXME change url
-  fetch('http://maps.geoportail.lu/main/wsgi/profile.json', request
+  fetch(lux.profileUrl, request
   ).then(function(resp) {
     return resp.json();
   }).then(function(data) {
